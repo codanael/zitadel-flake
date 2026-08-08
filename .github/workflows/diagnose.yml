@@ -19,7 +19,7 @@ jobs:
       github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
-      contents: write        # a branch, never a direct push to main
+      contents: write        # scope narrowed below to refs/heads/claude/* only
       pull-requests: write    # open the fix PR
       actions: read           # read the failed `update` run's logs
       # No workflows: write here, so the agent cannot rewrite its own guardrails.
@@ -69,8 +69,9 @@ jobs:
                no longer builds, update-zitadel.sh broken by an upstream
                format change, a Zitadel migration incompatible with
                PostgreSQL 18, etc.
-            3. If you have a minimal, safe fix: create a branch, apply it,
-               explain your reasoning, then open a pull request with:
+            3. If you have a minimal, safe fix: create a branch named
+               claude/<short-name>-${{ steps.guard.outputs.version }},
+               apply it, explain your reasoning, then open a pull request with:
                  gh pr create --label claude --base main \
                    --title "fix: <short summary> (Zitadel ${{ steps.guard.outputs.version }})" \
                    --body  "<detailed diagnosis and reasoning>"
@@ -78,6 +79,9 @@ jobs:
                anti-duplicate guard searches for it.
 
             Strict constraints:
+            - Your git push is only permitted to refs/heads/claude/* — you
+              cannot push to main or move/force any tag. Use the branch name
+              above.
             - Never modify .github/workflows/ (this job cannot push such a
               change anyway; a fix that would require it must be reported in
               the PR, not worked around).
@@ -91,4 +95,4 @@ jobs:
               branch and no PR: just explain why in the run summary.
           claude_args: |
             --max-turns 30
-            --allowedTools "Read,Grep,Glob,Edit,MultiEdit,Write,Bash(git:*),Bash(gh run view:*),Bash(gh pr create:*)"
+            --allowedTools "Read,Grep,Glob,Edit,MultiEdit,Write,Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git add:*),Bash(git commit:*),Bash(git switch:*),Bash(git push origin HEAD:refs/heads/claude/*),Bash(git push origin claude/*),Bash(git push -u origin claude/*),Bash(gh run view:*),Bash(gh pr create:*)"

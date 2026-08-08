@@ -51,6 +51,8 @@ jobs:
       # from everything else, which fails the job loudly.
       - name: Detect a newer version
         id: check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set +e
           output="$(./scripts/update-zitadel.sh --check)"
@@ -68,9 +70,30 @@ jobs:
           echo "::error::update-zitadel.sh --check failed unexpectedly (code $rc) — not to be confused with 'no update available'."
           exit 1
 
+      # A newer major is never auto-selected by the check above (v4 must keep
+      # getting v4 patches after v5 exists) — surface it so it isn't silently lost.
+      - name: Note newer major (not auto-applied)
+        if: steps.check.outputs.major_available != ''
+        run: |
+          echo "::warning::Zitadel ${{ steps.check.outputs.major_available }} is available upstream (current major: ${{ steps.check.outputs.current }}). It is never auto-selected; bump it manually when ready."
+
       - name: Apply the update
         if: steps.check.outputs.latest != ''
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: ./scripts/update-zitadel.sh
+
+      # Guards against a release landing between the check and apply calls,
+      # which independently re-query the API: fail loudly instead of shipping
+      # a PR titled for one version but built from another.
+      - name: Verify applied version matches detected version
+        if: steps.check.outputs.latest != ''
+        run: |
+          APPLIED="$(sed -n 's/^  version = "\([^"]*\)";.*/\1/p' pkgs/zitadel/default.nix | head -1)"
+          if [ "$APPLIED" != "${{ steps.check.outputs.latest }}" ]; then
+            echo "::error::Applied version ($APPLIED) does not match the version detected earlier (${{ steps.check.outputs.latest }}) — upstream released a newer version mid-run."
+            exit 1
+          fi
 
       - name: Build
         if: steps.check.outputs.latest != ''
@@ -117,14 +140,27 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Move floating tags
-        if: steps.check.outputs.kind == 'minor' && steps.pr.outputs.pull-request-number != ''
+      # Unconditional and idempotent, unlike a tag-move gated on this run's
+      # own merge: if a past run merged to main but its tag push failed
+      # (network blip, ref lock), nothing else would ever notice or retry —
+      # `v4` is the entire consumer contract. Runs every night regardless of
+      # whether this run found or applied an update.
+      - name: Reconcile floating tags with main
+        if: always()
         run: |
-          V="${{ steps.check.outputs.latest }}"
-          MAJOR="v${V%%.*}"
-          SHA="${{ steps.merge.outputs.sha }}"
-          git fetch origin "$SHA"
-          git tag -f "v$V" "$SHA"
-          git tag -f "$MAJOR" "$SHA"
-          git tag -f latest "$SHA"
-          git push -f origin "v$V" "$MAJOR" latest
+          git fetch origin --tags main
+          SHA="$(git rev-parse origin/main)"
+          CUR="$(git show "$SHA:pkgs/zitadel/default.nix" | sed -n 's/^  version = "\([^"]*\)";.*/\1/p' | head -1)"
+          if [ -z "$CUR" ]; then
+            echo "::error::Could not read the version off origin/main ($SHA); not touching tags."
+            exit 1
+          fi
+          MAJOR="v${CUR%%.*}"
+          for TAG in "v$CUR" "$MAJOR" latest; do
+            TAG_SHA="$(git rev-parse -q --verify "refs/tags/$TAG" || true)"
+            if [ "$TAG_SHA" != "$SHA" ]; then
+              echo "Moving $TAG -> $SHA (was ${TAG_SHA:-<missing>})"
+              git tag -f "$TAG" "$SHA"
+              git push -f origin "refs/tags/$TAG"
+            fi
+          done

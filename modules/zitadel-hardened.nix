@@ -27,9 +27,11 @@ lib.mkIf config.services.zitadel.enable {
     RestrictRealtime        = true;
     LockPersonality         = true;
     RemoveIPC               = true;
+    # No capabilities needed; a consumer setting Port <1024 will need CAP_NET_BIND_SERVICE here.
     CapabilityBoundingSet   = "";
     SystemCallArchitectures = "native";
     SystemCallFilter        = [ "@system-service" ];
+    # Relax this first if the Go binary faults with a memory-mapping error.
     MemoryDenyWriteExecute  = true;
   };
 }

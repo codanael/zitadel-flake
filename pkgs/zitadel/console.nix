@@ -19,7 +19,6 @@
 }:
 
 let
-  pnpm = pnpm_10;
   nodejs = nodejs_22;
 
   consoleProtobuf = generateProtobufCode {

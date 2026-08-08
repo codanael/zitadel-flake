@@ -27,7 +27,13 @@
         default = zitadel;
       };
 
-      nixosModules.default = import ./modules/zitadel-hardened.nix;
+      nixosModules.default = { config, lib, pkgs, ... }: {
+        imports = [ ./modules/zitadel-hardened.nix ];
+        config = lib.mkIf config.services.zitadel.enable {
+          # Cache hits need this exact derivation; a consumer overlaying its own nixpkgs would rebuild from source.
+          services.zitadel.package = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.zitadel;
+        };
+      };
 
       checks.${system}.zitadel-pg18 = import ./tests/zitadel-pg18.nix {
         inherit pkgs;

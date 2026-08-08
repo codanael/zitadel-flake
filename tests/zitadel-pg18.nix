@@ -4,6 +4,7 @@
 pkgs.testers.runNixOSTest {
   name = "zitadel-pg18";
 
+  # Required: nixpkgs.overlays below fails with "nixpkgs.overlays is set to read-only" otherwise.
   node.pkgsReadOnly = false;
 
   nodes.machine = { config, lib, pkgs, ... }: {

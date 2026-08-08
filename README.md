@@ -18,24 +18,33 @@ upstream source tag, kept current with a scheduled update workflow.
 
 ```nix
 {
-  inputs.zitadel-flake = {
-    url = "github:codanael/zitadel-flake?ref=v4";
-    inputs.nixpkgs.follows = "nixpkgs";
-  };
+  inputs.zitadel-flake.url = "github:codanael/zitadel-flake?ref=v4";
 }
 ```
+
+Do **not** add `inputs.nixpkgs.follows = "nixpkgs"` — see "Binary cache" below.
 
 Then, in your NixOS configuration:
 
 ```nix
 {
-  imports = [ zitadel-flake.nixosModules.default ];
-  nixpkgs.overlays = [ zitadel-flake.overlays.default ];
-  services.zitadel.enable = true;
+  inputs.zitadel-flake.url = "github:codanael/zitadel-flake?ref=v4";
+
+  outputs = { self, nixpkgs, zitadel-flake, ... }: {
+    nixosConfigurations.example = nixpkgs.lib.nixosSystem {
+      system = "x86_64-linux";
+      modules = [
+        zitadel-flake.nixosModules.default
+        { services.zitadel.enable = true; }
+      ];
+    };
+  };
 }
 ```
 
-> **Import the module, not just the overlay.** This package excludes
+> **Import the module.** Besides the hardening and login-v2 settings below,
+> it also sets `services.zitadel.package` to this flake's own prebuilt
+> package (`lib.mkDefault`, so it's still overridable). This package excludes
 > `apps/login` (Zitadel's separate Next.js login v2 application). Zitadel v4
 > requires login v2 on *newly created* instances, so without the module's
 > `DefaultInstance.Features.LoginV2.Required = false`, every interactive
@@ -44,19 +53,33 @@ Then, in your NixOS configuration:
 
 The flake exposes:
 
-- `overlays.default` — adds `zitadel` to `pkgs`.
 - `packages.x86_64-linux.zitadel` / `packages.x86_64-linux.default` — the
-  package on its own, without the overlay.
+  package, built against this flake's own locked nixpkgs. This is what the
+  binary cache serves.
+- `overlays.default` — adds `zitadel` to `pkgs`, built against **your**
+  nixpkgs. Convenient if you need the package outside `services.zitadel`,
+  but see "Binary cache" below before reaching for it.
 - `nixosModules.default` — the hardening and login-v2 settings described
-  above.
+  above; sets `services.zitadel.package` to `packages.<system>.zitadel`.
 - `checks.x86_64-linux.zitadel-pg18` — a NixOS VM test that boots this
-  package against PostgreSQL 18 and checks `init` and interactive login.
+  package against PostgreSQL 18 and checks `init` and that login v2 is not
+  required.
 
 ## Binary cache
 
 A public [Cachix](https://www.cachix.org/) cache exists at the address
-below, so that consumers won't have to rebuild Zitadel — and its Go and
-Node.js/pnpm build graph — from scratch.
+below. CI builds and pushes exactly one derivation to it:
+`packages.<system>.zitadel`, built against **this flake's own locked
+nixpkgs**.
+
+Cache hits require consuming that same derivation. Importing
+`nixosModules.default` gets you this for free (it sets
+`services.zitadel.package` to it). If instead you apply `overlays.default`
+against your own nixpkgs — most commonly by adding
+`inputs.nixpkgs.follows = "nixpkgs"` to this flake's input — you get a
+*different* derivation, evaluated against your nixpkgs, which was never
+pushed anywhere: guaranteed cache miss, and a full local rebuild of Zitadel's
+Go and Node.js/pnpm build graph.
 
 ```nix
 {
