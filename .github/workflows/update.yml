@@ -22,29 +22,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
 
-      - uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be   # v1.3.1
-        with:
-          tool-cache: true
-          large-packages: true
-
-      - name: Enable KVM
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
-            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-
-      - uses: cachix/install-nix-action@630ae543ea3a38a9a4166f03376c02c50f408342   # v31.11.0
-        with:
-          extra_nix_config: |
-            experimental-features = nix-command flakes
-
-      - uses: cachix/cachix-action@5f2d7c5294214f71b873db4b969586b980625e71   # v17
-        with:
-          name: codanael-zitadel
-          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
-          skipPush: true
-
+      # First real step on purpose: `--check` needs only curl/python3/sed, so
+      # the steady-state night (nothing newer, closure already cached) never
+      # pays for free-disk-space, KVM or a Nix install.
+      #
       # `--check` exits 1 both when there's nothing newer (handled below) and
       # on a genuine failure before the "current=" line is printed — so we
       # distinguish success (0) or a "clean" failure (1 with a current= line)
@@ -77,6 +58,85 @@ jobs:
         run: |
           echo "::warning::Zitadel ${{ steps.check.outputs.major_available }} is available upstream (current major: ${{ steps.check.outputs.current }}). It is never auto-selected; bump it manually when ready."
 
+      # Only an evaluation, no build: enough to learn the output path and ask
+      # Cachix whether it already has it. Skipped when an update is pending,
+      # since applying one changes the path this would have measured.
+      - uses: cachix/install-nix-action@630ae543ea3a38a9a4166f03376c02c50f408342   # v31.11.0
+        if: steps.check.outputs.latest == ''
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      # A repo bootstrapped at (or later settled back at) upstream's current
+      # release would otherwise never publish anything: build/test/push used
+      # to be gated on "an update was applied", so on every steady-state
+      # night — most nights — the job did nothing and the cache stayed
+      # empty forever. Publication must be self-healing like the tag
+      # reconciliation below: every run ends with the committed version's
+      # closure in Cachix, updated or not.
+      - name: Check whether the committed version is already cached
+        id: cached
+        if: steps.check.outputs.latest == ''
+        run: |
+          OUT="$(nix eval --raw .#zitadel)"
+          HASH="$(basename "$OUT" | cut -d- -f1)"
+          CODE="$(curl -sS -o /dev/null -w '%{http_code}' "https://codanael-zitadel.cachix.org/$HASH.narinfo")"
+          echo "out=$OUT" >> "$GITHUB_OUTPUT"
+          if [ "$CODE" = "200" ]; then
+            echo "cached=true" >> "$GITHUB_OUTPUT"
+            echo "$OUT already on Cachix ($HASH.narinfo -> $CODE) — nothing to build, test, or push."
+          else
+            echo "cached=false" >> "$GITHUB_OUTPUT"
+            echo "$OUT not on Cachix ($HASH.narinfo -> $CODE) — will build, test, and push."
+          fi
+
+      # One decision, evaluated once, so the gate below can't drift between
+      # steps. Values reach the shell as env, never interpolated into it.
+      - name: Decide whether this run has build work
+        id: work
+        env:
+          LATEST: ${{ steps.check.outputs.latest }}
+          CACHED: ${{ steps.cached.outputs.cached }}
+        run: |
+          if [ -n "$LATEST" ] || [ "$CACHED" != "true" ]; then
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+            echo "Build work needed (update pending, or committed version absent from the cache)."
+          else
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+            echo "Nothing to build: no newer version and the committed closure is already cached."
+          fi
+
+      # Everything below this line costs real runner minutes, so it all hangs
+      # off the single gate above. The Go + Angular + VM-image chain does not
+      # fit in the runner's stock free space, and the VM test needs /dev/kvm.
+      - uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be   # v1.3.1
+        if: steps.work.outputs.needed == 'true'
+        with:
+          tool-cache: true
+          large-packages: true
+
+      - name: Enable KVM
+        if: steps.work.outputs.needed == 'true'
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      # Re-run on the update path, where the evaluation above was skipped.
+      - uses: cachix/install-nix-action@630ae543ea3a38a9a4166f03376c02c50f408342   # v31.11.0
+        if: steps.work.outputs.needed == 'true' && steps.check.outputs.latest != ''
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - uses: cachix/cachix-action@5f2d7c5294214f71b873db4b969586b980625e71   # v17
+        if: steps.work.outputs.needed == 'true'
+        with:
+          name: codanael-zitadel
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          skipPush: true
+
       - name: Apply the update
         if: steps.check.outputs.latest != ''
         env:
@@ -95,43 +155,20 @@ jobs:
             exit 1
           fi
 
-      # A repo bootstrapped at (or later settled back at) upstream's current
-      # release would otherwise never publish anything: build/test/push used
-      # to be gated on "an update was applied", so on every steady-state
-      # night — most nights — the job did nothing and the cache stayed
-      # empty forever. Publication must be self-healing like the tag
-      # reconciliation below: every run ends with the committed version's
-      # closure in Cachix, updated or not. Cheap to check, cheap to repeat:
-      # this only evaluates (doesn't build) to get the output hash.
-      - name: Check whether the committed version is already cached
-        id: cached
-        run: |
-          OUT="$(nix eval --raw .#zitadel)"
-          HASH="$(basename "$OUT" | cut -d- -f1)"
-          CODE="$(curl -sS -o /dev/null -w '%{http_code}' "https://codanael-zitadel.cachix.org/$HASH.narinfo")"
-          echo "out=$OUT" >> "$GITHUB_OUTPUT"
-          if [ "$CODE" = "200" ]; then
-            echo "cached=true" >> "$GITHUB_OUTPUT"
-            echo "$OUT already on Cachix ($HASH.narinfo -> $CODE) — nothing to build, test, or push."
-          else
-            echo "cached=false" >> "$GITHUB_OUTPUT"
-            echo "$OUT not on Cachix ($HASH.narinfo -> $CODE) — will build, test, and push."
-          fi
-
       # Never pushed before its VM test passes, whichever path got us here:
       # a just-applied update or a steady-state re-publish of the committed
       # version. Not a double build/push on the update path — this is the
       # only Build/Test/Push in the job.
       - name: Build
-        if: steps.cached.outputs.cached != 'true'
+        if: steps.work.outputs.needed == 'true'
         run: nix build .#zitadel -L
 
       - name: Test in VM
-        if: steps.cached.outputs.cached != 'true'
+        if: steps.work.outputs.needed == 'true'
         run: nix build .#checks.x86_64-linux.zitadel-pg18 -L
 
       - name: Push to Cachix
-        if: steps.cached.outputs.cached != 'true'
+        if: steps.work.outputs.needed == 'true'
         run: |
           nix build .#zitadel --no-link --print-out-paths \
             | cachix push codanael-zitadel
@@ -171,7 +208,8 @@ jobs:
       # own merge: if a past run merged to main but its tag push failed
       # (network blip, ref lock), nothing else would ever notice or retry —
       # `v4` is the entire consumer contract. Runs every night regardless of
-      # whether this run found or applied an update.
+      # whether this run found or applied an update. Pure git, no Nix, so it
+      # still works on the cheap path where Nix was never installed.
       - name: Reconcile floating tags with main
         if: always()
         run: |
