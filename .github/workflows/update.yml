@@ -168,6 +168,7 @@ jobs:
         run: nix build .#checks.x86_64-linux.zitadel-pg18 -L
 
       - name: Push to Cachix
+        id: push
         if: steps.work.outputs.needed == 'true'
         run: |
           nix build .#zitadel --no-link --print-out-paths \
@@ -204,14 +205,20 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Unconditional and idempotent, unlike a tag-move gated on this run's
-      # own merge: if a past run merged to main but its tag push failed
-      # (network blip, ref lock), nothing else would ever notice or retry —
-      # `v4` is the entire consumer contract. Runs every night regardless of
-      # whether this run found or applied an update. Pure git, no Nix, so it
-      # still works on the cheap path where Nix was never installed.
+      # Retries a tag push a past run failed to land (network blip, ref lock):
+      # nothing else would ever notice, since the version already reads as
+      # current, and `v4` is the entire consumer contract. Pure git, no Nix,
+      # so it still works on the cheap path where Nix was never installed.
+      #
+      # Gated on the closure being verified — either already on Cachix, or
+      # built, VM-tested and pushed by this run. Without that gate it tracked
+      # main's tip, so any commit that touches no package file at all (a README
+      # edit, a workflow tweak) still dragged the consumer-facing tags onto a
+      # revision no VM test had ever seen.
       - name: Reconcile floating tags with main
-        if: always()
+        if: >
+          !cancelled() &&
+          (steps.cached.outputs.cached == 'true' || steps.push.outcome == 'success')
         run: |
           git fetch origin --tags main
           SHA="$(git rev-parse origin/main)"
@@ -220,8 +227,16 @@ jobs:
             echo "::error::Could not read the version off origin/main ($SHA); not touching tags."
             exit 1
           fi
-          MAJOR="v${CUR%%.*}"
-          for TAG in "v$CUR" "$MAJOR" latest; do
+          # `vX.Y.Z` is immutable per the README: created once, never moved.
+          # Only `vX` and `latest` float.
+          if git rev-parse -q --verify "refs/tags/v$CUR" >/dev/null; then
+            echo "v$CUR already exists — immutable, left alone."
+          else
+            echo "Creating v$CUR -> $SHA"
+            git tag "v$CUR" "$SHA"
+            git push origin "refs/tags/v$CUR"
+          fi
+          for TAG in "v${CUR%%.*}" latest; do
             TAG_SHA="$(git rev-parse -q --verify "refs/tags/$TAG" || true)"
             if [ "$TAG_SHA" != "$SHA" ]; then
               echo "Moving $TAG -> $SHA (was ${TAG_SHA:-<missing>})"
