@@ -61,10 +61,11 @@ let
       workDir ? ".",
       outputPath,
       hash,
+      postPatch ? "",
     }:
     stdenv.mkDerivation {
       pname = "${pname}-buf-generated";
-      inherit version;
+      inherit version postPatch;
 
       src = zitadelRepo;
 
