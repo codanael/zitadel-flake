@@ -1,0 +1,45 @@
+{
+  "nodes": {
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1786089803,
+        "narHash": "sha256-ZuvZfVW2tB5tXYEcpcfhVXB3N4OhdZLOqOviy4OD4b4=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "ee48b147c18c7de1e6ec97dc74792be42724bed1",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixos-26.05",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "nixpkgs": "nixpkgs",
+        "zitadel-src": "zitadel-src"
+      }
+    },
+    "zitadel-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1786116292,
+        "narHash": "sha256-fNaMf6LQYx4CQkf+aXMyjRfvLL8wd1FVRlztQUZD7jQ=",
+        "owner": "zitadel",
+        "repo": "zitadel",
+        "rev": "beffd5e32e98a1518e5f6dc17acda93f7786cc1e",
+        "type": "github"
+      },
+      "original": {
+        "owner": "zitadel",
+        "ref": "v4.16.3",
+        "repo": "zitadel",
+        "type": "github"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}

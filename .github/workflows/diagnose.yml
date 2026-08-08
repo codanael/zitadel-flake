@@ -1,0 +1,94 @@
+name: diagnose
+
+# Chains only off update.yml (schedule/workflow_dispatch only, never a
+# third-party-controlled event), so no third-party content reaches this
+# job despite it holding an Anthropic auth token.
+on:
+  workflow_run:
+    workflows: [update]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  diagnose:
+    # Only on failure, never from a PR, never from a fork.
+    if: >
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.event != 'pull_request' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # a branch, never a direct push to main
+      pull-requests: write    # open the fix PR
+      actions: read           # read the failed `update` run's logs
+      # No workflows: write here, so the agent cannot rewrite its own guardrails.
+      # No id-token: write: see the github_token note below.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+
+      # One attempt per upstream version, found via the failed run's logs
+      # rather than pkgs/zitadel/default.nix (which stays at the old version
+      # until an update actually succeeds and is committed).
+      - name: Check for an existing claude PR for this version
+        id: guard
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          V="$(gh run view "$RUN_ID" --log \
+                 | grep -oE 'latest=[^[:space:]]+' | head -1 | cut -d= -f2 || true)"
+          if [ -z "$V" ]; then
+            echo "::warning::Target version not found in run $RUN_ID's logs — skipping diagnosis."
+            echo "version=" >> "$GITHUB_OUTPUT"
+            echo "existing=1" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          N="$(gh pr list --label claude --search "$V in:title" --state all --json number --jq 'length')"
+          echo "existing=$N" >> "$GITHUB_OUTPUT"
+
+      # Anthropic auth: OAuth token, billed on the repo's subscription — no
+      # ANTHROPIC_API_KEY here. GitHub auth: github_token (job-scoped, expires
+      # at end of job) rather than the default GitHub App/OIDC exchange.
+      - name: Diagnose and propose a fix
+        if: steps.guard.outputs.existing == '0'
+        uses: anthropics/claude-code-action@6b082c41935b4c8a3b8b0ef85ba4ba4d9eeb8975   # v1.0.189
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          prompt: |
+            The Zitadel update to version
+            ${{ steps.guard.outputs.version }} failed in CI
+            (run: ${{ github.event.workflow_run.html_url }}).
+
+            1. Read the failed run's logs:
+               gh run view ${{ github.event.workflow_run.id }} --log-failed
+               (full log if needed: gh run view ${{ github.event.workflow_run.id }} --log)
+            2. Identify the actual cause: a diverged hash, a derivation that
+               no longer builds, update-zitadel.sh broken by an upstream
+               format change, a Zitadel migration incompatible with
+               PostgreSQL 18, etc.
+            3. If you have a minimal, safe fix: create a branch, apply it,
+               explain your reasoning, then open a pull request with:
+                 gh pr create --label claude --base main \
+                   --title "fix: <short summary> (Zitadel ${{ steps.guard.outputs.version }})" \
+                   --body  "<detailed diagnosis and reasoning>"
+               The title MUST contain the version above: this workflow's
+               anti-duplicate guard searches for it.
+
+            Strict constraints:
+            - Never modify .github/workflows/ (this job cannot push such a
+              change anyway; a fix that would require it must be reported in
+              the PR, not worked around).
+            - Do not touch hash values (goModulesHash, protobufGenerated,
+              consoleProtobuf, protoProtobuf, pnpmDeps) without precisely
+              explaining, in the PR, why they change.
+            - If the cause is a genuinely incompatible upstream change
+              (broken API, new prerequisite this package doesn't satisfy),
+              say so clearly and don't invent a cosmetic fix.
+            - If you have neither a fix nor a concrete diagnosis, create no
+              branch and no PR: just explain why in the run summary.
+          claude_args: |
+            --max-turns 30
+            --allowedTools "Read,Grep,Glob,Edit,MultiEdit,Write,Bash(git:*),Bash(gh run view:*),Bash(gh pr create:*)"

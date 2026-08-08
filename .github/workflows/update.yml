@@ -1,0 +1,130 @@
+name: update
+
+# Deliberately limited triggers: nothing a third party can drive. No
+# pull_request_target, issue_comment, or issues — this CI holds secrets.
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+
+      - uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be   # v1.3.1
+        with:
+          tool-cache: true
+          large-packages: true
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - uses: cachix/install-nix-action@630ae543ea3a38a9a4166f03376c02c50f408342   # v31.11.0
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - uses: cachix/cachix-action@5f2d7c5294214f71b873db4b969586b980625e71   # v17
+        with:
+          name: codanael-zitadel
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          skipPush: true
+
+      # `--check` exits 1 both when there's nothing newer (handled below) and
+      # on a genuine failure before the "current=" line is printed — so we
+      # distinguish success (0) or a "clean" failure (1 with a current= line)
+      # from everything else, which fails the job loudly.
+      - name: Detect a newer version
+        id: check
+        run: |
+          set +e
+          output="$(./scripts/update-zitadel.sh --check)"
+          rc=$?
+          set -e
+          printf '%s\n' "$output"
+          printf '%s\n' "$output" >> "$GITHUB_OUTPUT"
+          if [ "$rc" -eq 0 ]; then
+            exit 0
+          fi
+          if [ "$rc" -eq 1 ] && printf '%s\n' "$output" | grep -q '^current='; then
+            echo "No newer upstream version: not an error, nothing to do."
+            exit 0
+          fi
+          echo "::error::update-zitadel.sh --check failed unexpectedly (code $rc) — not to be confused with 'no update available'."
+          exit 1
+
+      - name: Apply the update
+        if: steps.check.outputs.latest != ''
+        run: ./scripts/update-zitadel.sh
+
+      - name: Build
+        if: steps.check.outputs.latest != ''
+        run: nix build .#zitadel -L
+
+      - name: Test in VM
+        if: steps.check.outputs.latest != ''
+        run: nix build .#checks.x86_64-linux.zitadel-pg18 -L
+
+      - name: Push to Cachix
+        if: steps.check.outputs.latest != ''
+        run: |
+          nix build .#zitadel --no-link --print-out-paths \
+            | cachix push codanael-zitadel
+        env:
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
+      - name: Open the PR
+        if: steps.check.outputs.latest != ''
+        id: pr
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1   # v8.1.1
+        with:
+          branch: update/zitadel-${{ steps.check.outputs.latest }}
+          title: "chore: Zitadel ${{ steps.check.outputs.latest }}"
+          commit-message: "chore: Zitadel ${{ steps.check.outputs.latest }}"
+          labels: ${{ steps.check.outputs.kind == 'major' && 'major' || 'auto' }}
+          body: |
+            Automatic bump to Zitadel ${{ steps.check.outputs.latest }}
+            (${{ steps.check.outputs.kind }}).
+
+            Build and PostgreSQL 18 VM test passed. Closure pushed to Cachix.
+
+      # Majors are never auto-merged.
+      - name: Merge (minor/patch only)
+        if: steps.check.outputs.kind == 'minor' && steps.pr.outputs.pull-request-number != ''
+        id: merge
+        run: |
+          PR="${{ steps.pr.outputs.pull-request-number }}"
+          gh pr merge --squash --delete-branch "$PR"
+          # Get the merge commit SHA as GitHub created it, not origin/main's
+          # tip (which may have moved), so we don't tag the wrong commit.
+          MERGE_SHA="$(gh pr view "$PR" --json mergeCommit -q .mergeCommit.oid)"
+          echo "sha=$MERGE_SHA" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Move floating tags
+        if: steps.check.outputs.kind == 'minor' && steps.pr.outputs.pull-request-number != ''
+        run: |
+          V="${{ steps.check.outputs.latest }}"
+          MAJOR="v${V%%.*}"
+          SHA="${{ steps.merge.outputs.sha }}"
+          git fetch origin "$SHA"
+          git tag -f "v$V" "$SHA"
+          git tag -f "$MAJOR" "$SHA"
+          git tag -f latest "$SHA"
+          git push -f origin "v$V" "$MAJOR" latest
