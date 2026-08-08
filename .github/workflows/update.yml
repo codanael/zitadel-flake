@@ -95,16 +95,43 @@ jobs:
             exit 1
           fi
 
+      # A repo bootstrapped at (or later settled back at) upstream's current
+      # release would otherwise never publish anything: build/test/push used
+      # to be gated on "an update was applied", so on every steady-state
+      # night — most nights — the job did nothing and the cache stayed
+      # empty forever. Publication must be self-healing like the tag
+      # reconciliation below: every run ends with the committed version's
+      # closure in Cachix, updated or not. Cheap to check, cheap to repeat:
+      # this only evaluates (doesn't build) to get the output hash.
+      - name: Check whether the committed version is already cached
+        id: cached
+        run: |
+          OUT="$(nix eval --raw .#zitadel)"
+          HASH="$(basename "$OUT" | cut -d- -f1)"
+          CODE="$(curl -sS -o /dev/null -w '%{http_code}' "https://codanael-zitadel.cachix.org/$HASH.narinfo")"
+          echo "out=$OUT" >> "$GITHUB_OUTPUT"
+          if [ "$CODE" = "200" ]; then
+            echo "cached=true" >> "$GITHUB_OUTPUT"
+            echo "$OUT already on Cachix ($HASH.narinfo -> $CODE) — nothing to build, test, or push."
+          else
+            echo "cached=false" >> "$GITHUB_OUTPUT"
+            echo "$OUT not on Cachix ($HASH.narinfo -> $CODE) — will build, test, and push."
+          fi
+
+      # Never pushed before its VM test passes, whichever path got us here:
+      # a just-applied update or a steady-state re-publish of the committed
+      # version. Not a double build/push on the update path — this is the
+      # only Build/Test/Push in the job.
       - name: Build
-        if: steps.check.outputs.latest != ''
+        if: steps.cached.outputs.cached != 'true'
         run: nix build .#zitadel -L
 
       - name: Test in VM
-        if: steps.check.outputs.latest != ''
+        if: steps.cached.outputs.cached != 'true'
         run: nix build .#checks.x86_64-linux.zitadel-pg18 -L
 
       - name: Push to Cachix
-        if: steps.check.outputs.latest != ''
+        if: steps.cached.outputs.cached != 'true'
         run: |
           nix build .#zitadel --no-link --print-out-paths \
             | cachix push codanael-zitadel
@@ -124,7 +151,7 @@ jobs:
             Automatic bump to Zitadel ${{ steps.check.outputs.latest }}
             (${{ steps.check.outputs.kind }}).
 
-            Build and PostgreSQL 18 VM test passed. Closure pushed to Cachix.
+            Build and PostgreSQL 18 VM test passed. Closure is on Cachix.
 
       # Majors are never auto-merged.
       - name: Merge (minor/patch only)
