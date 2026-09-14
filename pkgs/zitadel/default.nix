@@ -128,7 +128,22 @@ buildGoModule (finalAttrs: {
 
   doCheck = false;
 
-  preBuild = ''
+  # `postConfigure`, not `preBuild`: buildGoModule copies the parent's
+  # `preBuild` verbatim into the `goModules` fixed-output derivation (see
+  # pkgs/build-support/go/module.nix — `prePatch`, `patches`, `postPatch`,
+  # `preBuild`, `sourceRoot` and `env` are all inherited, deliberately, to keep
+  # vendor hashes stable across nixpkgs). The store paths interpolated below
+  # would therefore become build inputs of `zitadel.goModules`, making the Go
+  # module cache depend on the console and protobuf derivations — i.e. on every
+  # other hash in this repo. Resolving `goModules` first on a version bump then
+  # fails inside *those* derivations, which still carry the previous release's
+  # hashes, and that is what broke every automatic update after 4.16.3.
+  #
+  # `postConfigure` is not inherited, and the parent's configurePhase runs it
+  # after GOPATH/GOPROXY are exported and after `cd $modRoot`, so the generated
+  # files still land before buildPhase. `goModules` stays a leaf that depends on
+  # `src` alone.
+  postConfigure = ''
     substituteInPlace internal/api/ui/login/static/resources/generate.go \
       --replace-fail \
         "//go:generate pnpm sass themes/scss/zitadel.scss themes/zitadel/css/zitadel.css" \
