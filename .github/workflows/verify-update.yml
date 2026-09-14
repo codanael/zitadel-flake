@@ -1,0 +1,57 @@
+name: verify-update
+
+# A dry run of scripts/update-zitadel.sh: applies the update, builds it and
+# runs the VM test, but opens no PR, moves no tag and pushes nothing to
+# Cachix. Use it to validate changes to the update machinery on a branch
+# before letting the scheduled `update` workflow act on them.
+#
+# Manual only, like `update`: nothing a third party can drive.
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+
+      # The Go + Angular + VM-image chain does not fit in the runner's stock
+      # free space, and the VM test needs /dev/kvm.
+      - uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be   # v1.3.1
+        with:
+          tool-cache: true
+          large-packages: true
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - uses: cachix/install-nix-action@630ae543ea3a38a9a4166f03376c02c50f408342   # v31.11.0
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Apply the update
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./scripts/update-zitadel.sh
+
+      # The point of the dry run: what the script decided, whether it got
+      # there or died partway (the script restores the tree on failure, so an
+      # empty diff after a failure is expected, not a second bug).
+      - name: Show the resulting diff
+        if: always()
+        run: git --no-pager diff
+
+      - name: Build
+        run: nix build .#zitadel -L
+
+      - name: Test in VM
+        run: nix build .#checks.x86_64-linux.zitadel-pg18 -L
