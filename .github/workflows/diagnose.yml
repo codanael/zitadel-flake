@@ -48,6 +48,33 @@ jobs:
           N="$(gh pr list --label claude --search "$V in:title" --state all --json number --jq 'length')"
           echo "existing=$N" >> "$GITHUB_OUTPUT"
 
+      # Nix, so the agent can reproduce the failure and prove a fix instead of
+      # guessing from logs. Without it every diagnosis was speculative: it
+      # could not run update-zitadel.sh, could not resolve a hash, and could
+      # not build what it proposed — 30 consecutive nights produced no PR.
+      #
+      # Gated on the same guard as the agent step, so a night where a PR for
+      # this version already exists stays cheap.
+      - uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be   # v1.3.1
+        if: steps.guard.outputs.existing == '0'
+        with:
+          tool-cache: true
+          large-packages: true
+
+      - name: Enable KVM
+        if: steps.guard.outputs.existing == '0'
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - uses: cachix/install-nix-action@630ae543ea3a38a9a4166f03376c02c50f408342   # v31.11.0
+        if: steps.guard.outputs.existing == '0'
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
       # Anthropic auth: OAuth token, billed on the repo's subscription — no
       # ANTHROPIC_API_KEY here. GitHub auth: github_token (job-scoped, expires
       # at end of job) rather than the default GitHub App/OIDC exchange.
@@ -65,11 +92,13 @@ jobs:
             1. Read the failed run's logs:
                gh run view ${{ github.event.workflow_run.id }} --log-failed
                (full log if needed: gh run view ${{ github.event.workflow_run.id }} --log)
-            2. Identify the actual cause: a diverged hash, a derivation that
-               no longer builds, update-zitadel.sh broken by an upstream
-               format change, a Zitadel migration incompatible with
-               PostgreSQL 18, etc.
-            3. If you have a minimal, safe fix: create a branch named
+            2. Identify the actual cause: a derivation that no longer builds,
+               update-zitadel.sh broken by an upstream format change, a
+               Zitadel migration incompatible with PostgreSQL 18, etc.
+            3. Reproduce it. You have Nix in this job, so do not theorise from
+               the logs alone: run ./scripts/update-zitadel.sh and watch where
+               it stops.
+            4. If you have a minimal, safe fix: create a branch named
                claude/<short-name>-${{ steps.guard.outputs.version }},
                apply it, explain your reasoning, then open a pull request with:
                  gh pr create --label claude --base main \
@@ -78,6 +107,13 @@ jobs:
                The title MUST contain the version above: this workflow's
                anti-duplicate guard searches for it.
 
+            Before opening it, prove the fix:
+              nix build .#zitadel -L
+              nix build .#checks.x86_64-linux.zitadel-pg18 -L
+            Do not open a PR for a fix you have not built. If you ran out of
+            time or the build is still failing, say so in the run summary and
+            open nothing.
+
             Strict constraints:
             - Your git push is only permitted to refs/heads/claude/* — you
               cannot push to main or move/force any tag. Use the branch name
@@ -85,9 +121,14 @@ jobs:
             - Never modify .github/workflows/ (this job cannot push such a
               change anyway; a fix that would require it must be reported in
               the PR, not worked around).
-            - Do not touch hash values (goModulesHash, protobufGenerated,
-              consoleProtobuf, protoProtobuf, pnpmDeps) without precisely
-              explaining, in the PR, why they change.
+            - Never hand-write a hash value (goModulesHash, protobufGenerated,
+              consoleProtobuf, protoProtobuf, pnpmDeps). update-zitadel.sh
+              resolves all six itself and verifies them by building; a hash
+              you typed in to make an error go away is a guess wearing a
+              checksum. If the script reports "Could not resolve <marker>",
+              that message is the real failure — the derivation it names
+              could not build, or one of its dependencies is stale. Diagnose
+              that, do not paste the `got:` value into the file.
             - If the cause is a genuinely incompatible upstream change
               (broken API, new prerequisite this package doesn't satisfy),
               say so clearly and don't invent a cosmetic fix.
@@ -95,4 +136,4 @@ jobs:
               branch and no PR: just explain why in the run summary.
           claude_args: |
             --max-turns 30
-            --allowedTools "Read,Grep,Glob,Edit,MultiEdit,Write,Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git add:*),Bash(git commit:*),Bash(git switch:*),Bash(git push origin HEAD:refs/heads/claude/*),Bash(git push origin claude/*),Bash(git push -u origin claude/*),Bash(gh run view:*),Bash(gh pr create:*)"
+            --allowedTools "Read,Grep,Glob,Edit,MultiEdit,Write,Bash(nix build:*),Bash(nix eval:*),Bash(nix flake:*),Bash(./scripts/update-zitadel.sh:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git add:*),Bash(git commit:*),Bash(git switch:*),Bash(git push origin HEAD:refs/heads/claude/*),Bash(git push origin claude/*),Bash(git push -u origin claude/*),Bash(gh run view:*),Bash(gh pr create:*)"
