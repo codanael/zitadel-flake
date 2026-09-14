@@ -191,17 +191,17 @@ jobs:
 
             Build and PostgreSQL 18 VM test passed. Closure is on Cachix.
 
-      # Majors are never auto-merged.
+      # Majors are never auto-merged — though today that is belt and braces:
+      # latest_candidate() only ever selects within the current major, so
+      # bump_kind always compares two equal majors and `kind` is always
+      # `minor`. A new major reaches a human through the major_available
+      # warning above, never through this step. The gate stays as a guard for
+      # the day that changes; whoever flips that switch must also create the
+      # `major` label, which does not exist in this repo.
       - name: Merge (minor/patch only)
         if: steps.check.outputs.kind == 'minor' && steps.pr.outputs.pull-request-number != ''
-        id: merge
         run: |
-          PR="${{ steps.pr.outputs.pull-request-number }}"
-          gh pr merge --squash --delete-branch "$PR"
-          # Get the merge commit SHA as GitHub created it, not origin/main's
-          # tip (which may have moved), so we don't tag the wrong commit.
-          MERGE_SHA="$(gh pr view "$PR" --json mergeCommit -q .mergeCommit.oid)"
-          echo "sha=$MERGE_SHA" >> "$GITHUB_OUTPUT"
+          gh pr merge --squash --delete-branch "${{ steps.pr.outputs.pull-request-number }}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
