@@ -124,26 +124,106 @@ set_hash() {  # $1 = marker, $2 = value, $3 = file
   sed -i "s|\(= \)\"[^\"]*\"\(; *# @hash:$1\$\)|\1\"$2\"\2|" "$3"
 }
 
+get_hash() {  # $1 = marker, $2 = file
+  sed -n "s|.*= \"\([^\"]*\)\"; *# @hash:$1\$|\1|p" "$2" | head -1
+}
+
+# Take the new hash only from the derivation actually being resolved.
+#
+# This used to scrape the first `got:` anywhere in nix's output. On a version
+# bump *every* marker in the tree still holds the previous release's hash, so
+# the build usually fails inside some other fixed-output derivation first, and
+# whichever one lost the parallel race had its hash written into the marker
+# being resolved. That silently corrupted the rest of the pass — each later
+# resolve then tripped over the marker the previous one had poisoned — and only
+# surfaced ~15 minutes later, in CI's Build step, as a bare hash mismatch.
+#
+# The expected `.drv` is evaluated up front (it is well defined: the placeholder
+# below is part of the derivation), and anything that is not a mismatch on that
+# exact path is now a hard failure rather than a guess.
 resolve() {   # $1 = marker, $2 = attribute, $3 = file
-  local marker="$1" attr="$2" file="$3" out got
+  local marker="$1" attr="$2" file="$3" drv out got
   set_hash "$marker" "$FAKE" "$file"
-  out="$(nix build ".#$attr" --no-link 2>&1 || true)"
-  got="$(printf '%s' "$out" | sed -n 's/.*got: *\(sha256-[A-Za-z0-9+/=]*\).*/\1/p' | head -1)"
-  if [ -z "$got" ]; then
-    echo "Could not resolve $marker via $attr" >&2
-    printf '%s\n' "$out" | tail -30 >&2
+
+  if ! drv="$(nix eval --raw ".#$attr.drvPath")" || [ -z "$drv" ]; then
+    echo "Could not evaluate .#$attr while resolving $marker" >&2
     exit 1
   fi
+
+  out="$(nix build ".#$attr" --no-link 2>&1 || true)"
+  got="$(printf '%s\n' "$out" | awk -v want="$drv" '
+    /hash mismatch in fixed-output derivation/ {
+      cur = (index($0, want) > 0) ? want : ""
+      next
+    }
+    cur == want && /got:/ {
+      if (match($0, /sha256-[A-Za-z0-9+\/=]+/)) {
+        print substr($0, RSTART, RLENGTH)
+        exit
+      }
+    }')"
+
+  if [ -z "$got" ]; then
+    echo "Could not resolve $marker: no hash mismatch reported for $drv." >&2
+    echo "The build failed for some other reason, or a dependency's hash is stale." >&2
+    printf '%s\n' "$out" | tail -40 >&2
+    exit 1
+  fi
+
   set_hash "$marker" "$got" "$file"
   echo "  $marker = $got" >&2
 }
 
+# Strictly bottom-up, and always against the fixed-output derivation itself
+# rather than something that consumes it: resolving `clientPnpmDeps` by
+# building `zitadel.console.client` used to fail inside `protoProtobuf` (which
+# `client` copies in) — while `protoProtobuf` in turn reuses `client.pnpmDeps`,
+# a knot that only unties by addressing each FOD directly.
 resolve goModules         zitadel.goModules                 "$DEFAULT_NIX"
 resolve protobufGenerated zitadel.protobufGenerated         "$DEFAULT_NIX"
 resolve consoleProtobuf   zitadel.console.consoleProtobuf   "$CONSOLE_NIX"
+resolve clientPnpmDeps    zitadel.console.client.pnpmDeps   "$CONSOLE_NIX"
+
+# fetchPnpmDeps fetches the whole workspace lockfile regardless of the
+# --filter, so console's deps are byte-for-byte client's. Copy rather than
+# spend a second full fetch; the verification pass below proves it.
+PNPM_DEPS="$(get_hash clientPnpmDeps "$CONSOLE_NIX")"
+if [ -z "$PNPM_DEPS" ]; then
+  echo "Could not read back the clientPnpmDeps marker from $CONSOLE_NIX" >&2
+  exit 1
+fi
+set_hash consolePnpmDeps "$PNPM_DEPS" "$CONSOLE_NIX"
+echo "  consolePnpmDeps = $PNPM_DEPS (copied from clientPnpmDeps)" >&2
+
 resolve protoProtobuf     zitadel.console.protoProtobuf     "$CONSOLE_NIX"
-resolve clientPnpmDeps    zitadel.console.client            "$CONSOLE_NIX"
-resolve consolePnpmDeps   zitadel.console                   "$CONSOLE_NIX"
+
+# Each resolve above is only as good as the state of the *other* markers at the
+# moment it ran. Prove the set is mutually consistent before reporting success:
+# every fixed-output derivation must now build. This is the same work CI's
+# Build step would do — the store paths it produces are reused there — so it
+# costs no extra wall clock, it just fails here, naming the derivation, instead
+# of later as an unattributed mismatch.
+if grep -qF "$FAKE" flake.nix "$DEFAULT_NIX" "$CONSOLE_NIX"; then
+  echo "A placeholder hash survived the resolve pass:" >&2
+  grep -nF "$FAKE" flake.nix "$DEFAULT_NIX" "$CONSOLE_NIX" >&2
+  exit 1
+fi
+
+echo "Verifying the resolved hashes against a real build..." >&2
+for attr in \
+  zitadel.goModules \
+  zitadel.protobufGenerated \
+  zitadel.console.consoleProtobuf \
+  zitadel.console.client.pnpmDeps \
+  zitadel.console.pnpmDeps \
+  zitadel.console.protoProtobuf
+do
+  echo "  .#$attr" >&2
+  if ! nix build ".#$attr" --no-link; then
+    echo "Verification failed: .#$attr does not build with the resolved hashes." >&2
+    exit 1
+  fi
+done
 
 UPDATE_APPLIED=true
 echo "updated=true"
