@@ -1,0 +1,119 @@
+name: update-nixpkgs
+
+# `update` deliberately bumps zitadel-src only. Moving nixpkgs rebuilds the
+# entire closure -- Go toolchain, Node, pnpm, every dependency -- and
+# invalidates every Cachix entry, so it gets its own cadence and its own PR
+# rather than riding along with a Zitadel patch release. Nothing bumped
+# nixpkgs at all before this workflow existed.
+#
+# Never auto-merged: a nixpkgs bump changes the compiler under the package, so
+# a human looks at it. Once merged, the next nightly `update` run finds the
+# committed version already cached and reconciles v4/latest onto the new tip,
+# so this workflow does not touch tags itself.
+#
+# Same deliberately limited triggers as `update`: nothing a third party can
+# drive. No pull_request_target, issue_comment, or issues -- this CI holds
+# secrets.
+on:
+  schedule:
+    - cron: "31 5 1 * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: update-nixpkgs
+  cancel-in-progress: false
+
+jobs:
+  update-nixpkgs:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+
+      # The Go + Angular + VM-image chain does not fit in the runner's stock
+      # free space, and the VM test needs /dev/kvm.
+      - uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be   # v1.3.1
+        with:
+          tool-cache: true
+          large-packages: true
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - uses: cachix/install-nix-action@630ae543ea3a38a9a4166f03376c02c50f408342   # v31.11.0
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - uses: cachix/cachix-action@5f2d7c5294214f71b873db4b969586b980625e71   # v17
+        with:
+          name: codanael-zitadel
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          skipPush: true
+
+      # `nixos-26.05` is a moving branch, so this is a no-op on any month where
+      # the channel has not advanced. Compare the locked rev rather than
+      # trusting the command's output, and skip the expensive half below when
+      # nothing moved.
+      - name: Update the nixpkgs input
+        id: update
+        run: |
+          rev() {
+            python3 -c "import json;print(json.load(open('flake.lock'))['nodes']['nixpkgs']['locked']['rev'])"
+          }
+          BEFORE="$(rev)"
+          nix flake update nixpkgs
+          AFTER="$(rev)"
+          echo "before=$BEFORE" >> "$GITHUB_OUTPUT"
+          echo "after=$AFTER" >> "$GITHUB_OUTPUT"
+          if [ "$BEFORE" = "$AFTER" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "nixpkgs is already at $BEFORE -- nothing to do."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "nixpkgs $BEFORE -> $AFTER"
+          fi
+
+      - name: Build
+        if: steps.update.outputs.changed == 'true'
+        run: nix build .#zitadel -L
+
+      - name: Test in VM
+        if: steps.update.outputs.changed == 'true'
+        run: nix build .#checks.x86_64-linux.zitadel-pg18 -L
+
+      # Pushed before the PR is opened, as in `update`: the closure a reviewer
+      # would be merging is already on Cachix by the time they look at it.
+      - name: Push to Cachix
+        if: steps.update.outputs.changed == 'true'
+        run: |
+          nix build .#zitadel --no-link --print-out-paths \
+            | cachix push codanael-zitadel
+        env:
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
+      - name: Open the PR
+        if: steps.update.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1   # v8.1.1
+        with:
+          branch: update/nixpkgs
+          title: "chore: nixpkgs ${{ steps.update.outputs.after }}"
+          commit-message: "chore: nixpkgs ${{ steps.update.outputs.after }}"
+          body: |
+            Rebuilds the whole closure against a newer nixpkgs.
+
+            `${{ steps.update.outputs.before }}`
+            -> `${{ steps.update.outputs.after }}`
+
+            Build and PostgreSQL 18 VM test passed. Closure is on Cachix.
+
+            Not auto-merged: a nixpkgs bump moves the Go and Node toolchains
+            under the package.
