@@ -67,7 +67,7 @@ let
       inherit (finalAttrs) pname version src;
       pnpm = pnpm_10;
       fetcherVersion = 3;
-      hash = "sha256-zvFyuWQgpolcXgxppdFbhV5GEGhApnxaDGaDQ9QtR9k="; # @hash:clientPnpmDeps
+      hash = "sha256-4E27/GWLBl7CzlPwIQ94dA1AkG/M42wdgzNf/4PNNDg="; # @hash:clientPnpmDeps
     };
 
     pnpmWorkspaces = [
@@ -149,7 +149,7 @@ stdenv.mkDerivation (finalAttrs: {
     inherit (finalAttrs) pname version src;
     pnpm = pnpm_10;
     fetcherVersion = 3;
-    hash = "sha256-zvFyuWQgpolcXgxppdFbhV5GEGhApnxaDGaDQ9QtR9k="; # @hash:consolePnpmDeps
+    hash = "sha256-4E27/GWLBl7CzlPwIQ94dA1AkG/M42wdgzNf/4PNNDg="; # @hash:consolePnpmDeps
   };
 
   pnpmWorkspaces = [
