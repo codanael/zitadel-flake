@@ -54,7 +54,7 @@ let
       substituteInPlace console/buf.gen.yaml \
         --replace-fail "plugin: js" "plugin: buf.build/protocolbuffers/js:v4.0.2"
     '';
-    hash = "sha256-R2OC8jC/hZpUAXAV8j5nx68Gn3Zc8asFQA5rAfW0XfQ="; # @hash:consoleProtobuf
+    hash = "sha256-7Ia563kcHH2D/yoGOPuh/Wszk3E58EsFUPFOcjUxM08="; # @hash:consoleProtobuf
   };
 
   client = stdenv.mkDerivation (finalAttrs: {
@@ -67,7 +67,7 @@ let
       inherit (finalAttrs) pname version src;
       pnpm = pnpm_10;
       fetcherVersion = 3;
-      hash = "sha256-4E27/GWLBl7CzlPwIQ94dA1AkG/M42wdgzNf/4PNNDg="; # @hash:clientPnpmDeps
+      hash = "sha256-TyoQnM3MnIo8LSTl934r9w2FiptS31MaKte2SMmwWxo="; # @hash:clientPnpmDeps
     };
 
     pnpmWorkspaces = [
@@ -136,7 +136,7 @@ let
 
     outputHashMode = "recursive";
     outputHashAlgo = "sha256";
-    outputHash = "sha256-sxvyFBl/P2DwtHoehpilmJ6S1dDlVbKr/TgoMs1wgDs="; # @hash:protoProtobuf
+    outputHash = "sha256-YpQC0M+f7UcmbXsGm2A5v7uei7VMxL190WoiBIZJwtQ="; # @hash:protoProtobuf
   };
 in
 stdenv.mkDerivation (finalAttrs: {
@@ -149,7 +149,7 @@ stdenv.mkDerivation (finalAttrs: {
     inherit (finalAttrs) pname version src;
     pnpm = pnpm_10;
     fetcherVersion = 3;
-    hash = "sha256-4E27/GWLBl7CzlPwIQ94dA1AkG/M42wdgzNf/4PNNDg="; # @hash:consolePnpmDeps
+    hash = "sha256-TyoQnM3MnIo8LSTl934r9w2FiptS31MaKte2SMmwWxo="; # @hash:consolePnpmDeps
   };
 
   pnpmWorkspaces = [

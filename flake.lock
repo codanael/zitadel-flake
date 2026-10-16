@@ -25,16 +25,16 @@
     "zitadel-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1790844267,
-        "narHash": "sha256-gfeJXRBVZNkGl+SHsGtOMLaNiksg/sFnzf8ISb5cItM=",
+        "lastModified": 1792050222,
+        "narHash": "sha256-FFXsoBlbNTFT1FSxs/IomqTrtNGqsxq9Ck5TSDpSWHM=",
         "owner": "zitadel",
         "repo": "zitadel",
-        "rev": "101343ad87aef7b0eea7c3522d519308e0ea9547",
+        "rev": "a618740b578627b7b9acbbb111a6948882d6f5dc",
         "type": "github"
       },
       "original": {
         "owner": "zitadel",
-        "ref": "v4.19.4",
+        "ref": "v4.19.5",
         "repo": "zitadel",
         "type": "github"
       }
