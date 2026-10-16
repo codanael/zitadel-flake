@@ -18,7 +18,7 @@
 }:
 
 let
-  version = "4.19.4";
+  version = "4.19.5";
 
   zitadelRepo = zitadelSrc;
 
@@ -101,7 +101,7 @@ let
       protoc-gen-zitadel
     ];
     outputPath = ".artifacts";
-    hash = "sha256-IhkrjXXm0gkGoZVwYdEYOeuqReEKhAoHqdYdLnYKVYY="; # @hash:protobufGenerated
+    hash = "sha256-UF55H5zcdiS8bTTult0LoRq+kHfCnOrNbTP9WhfwviA="; # @hash:protobufGenerated
   };
 in
 buildGoModule (finalAttrs: {

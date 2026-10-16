@@ -5,7 +5,7 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
 
     zitadel-src = {
-      url = "github:zitadel/zitadel/v4.19.4";
+      url = "github:zitadel/zitadel/v4.19.5";
       flake = false;
     };
   };
