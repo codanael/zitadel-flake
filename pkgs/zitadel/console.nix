@@ -54,7 +54,7 @@ let
       substituteInPlace console/buf.gen.yaml \
         --replace-fail "plugin: js" "plugin: buf.build/protocolbuffers/js:v4.0.2"
     '';
-    hash = "sha256-7Ia563kcHH2D/yoGOPuh/Wszk3E58EsFUPFOcjUxM08="; # @hash:consoleProtobuf
+    hash = "sha256-p9mBp9MmHe2q7hEOgUV1f9TKTRoCG4Ck8clpdzmEm6s="; # @hash:consoleProtobuf
   };
 
   client = stdenv.mkDerivation (finalAttrs: {
@@ -136,7 +136,7 @@ let
 
     outputHashMode = "recursive";
     outputHashAlgo = "sha256";
-    outputHash = "sha256-YpQC0M+f7UcmbXsGm2A5v7uei7VMxL190WoiBIZJwtQ="; # @hash:protoProtobuf
+    outputHash = "sha256-+KMlqOBiQmL1NHJI2Q7J2CkPuYWFrNiPXkKp/0ntdB8="; # @hash:protoProtobuf
   };
 in
 stdenv.mkDerivation (finalAttrs: {
