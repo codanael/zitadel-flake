@@ -18,7 +18,7 @@
 }:
 
 let
-  version = "4.19.5";
+  version = "4.20.0";
 
   zitadelRepo = zitadelSrc;
 
@@ -27,7 +27,7 @@ let
     "${lib.substring 0 4 d}-${lib.substring 4 2 d}-${lib.substring 6 2 d}"
     + "T${lib.substring 8 2 d}:${lib.substring 10 2 d}:${lib.substring 12 2 d}Z";
 
-  goModulesHash = "sha256-8/TkV1JTKNSIknzEPbTDWzcOZQ6jCEkc6vSLLhdLYrs="; # @hash:goModules
+  goModulesHash = "sha256-YJTQCxTTRLZNchyxxMhEe6sJZMXDqamVdD8NrEIlIDI="; # @hash:goModules
 
   buildZitadelProtocGen =
     name:
@@ -101,7 +101,7 @@ let
       protoc-gen-zitadel
     ];
     outputPath = ".artifacts";
-    hash = "sha256-UF55H5zcdiS8bTTult0LoRq+kHfCnOrNbTP9WhfwviA="; # @hash:protobufGenerated
+    hash = "sha256-bHXPb/Z/YXLh58fPVfSbq2h0Ts+7HqbnmHHC6kJtjJM="; # @hash:protobufGenerated
   };
 in
 buildGoModule (finalAttrs: {
