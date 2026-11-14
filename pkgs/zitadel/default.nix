@@ -18,7 +18,7 @@
 }:
 
 let
-  version = "4.20.2";
+  version = "4.20.3";
 
   zitadelRepo = zitadelSrc;
 
@@ -27,7 +27,7 @@ let
     "${lib.substring 0 4 d}-${lib.substring 4 2 d}-${lib.substring 6 2 d}"
     + "T${lib.substring 8 2 d}:${lib.substring 10 2 d}:${lib.substring 12 2 d}Z";
 
-  goModulesHash = "sha256-6Y3uHsPeJp0TkAiAkiOUWHGaXzaO8fs4IWkQOmijJCg="; # @hash:goModules
+  goModulesHash = "sha256-IZM5DS7SbEgwPinkb/GA0aU9IqnLmPpP6C0Bp4Nh5Vc="; # @hash:goModules
 
   buildZitadelProtocGen =
     name:
