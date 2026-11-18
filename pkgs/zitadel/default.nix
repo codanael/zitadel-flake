@@ -18,7 +18,7 @@
 }:
 
 let
-  version = "4.20.3";
+  version = "4.20.4";
 
   zitadelRepo = zitadelSrc;
 
